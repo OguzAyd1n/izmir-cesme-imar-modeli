@@ -21,6 +21,7 @@ import folium
 from folium.plugins import HeatMap
 import warnings
 warnings.filterwarnings('ignore')
+import json
 
 # ------------ ADIM 1: VERİ TOPLAMA VE YÜKLEME ------------
 
@@ -395,7 +396,6 @@ def veri_on_isleme(veri_sozlugu):
     parcels['is_protected'] = parcels.index.isin(protected_indices)
     protection_type_map = protected_intersection[['protection_type']].groupby(protected_intersection.index).first()
     parcels['protection_type'] = parcels.index.map(protection_type_map['protection_type'])
-
 
     # Jeolojik verilerle birleştir
     geology = veri_sozlugu['geology']
@@ -879,281 +879,276 @@ def hibrit_model_puanlama(parcels_gdf):
 
 # ------------ ADIM 5: GÖRSELLEŞTIRME ------------
 
-def gorsellestime(parcels_gdf, output_folder='output'):
+def gorsellestirme(parcels_gdf, output_dir='output'):
     """
-    Model sonuçlarını görselleştirir ve raporlar
+    Model sonuçlarını görselleştirir ve haritalar oluşturur
     """
-    print("Görselleştirme ve raporlama başlatılıyor...")
+    print("Görselleştirme başlatılıyor...")
     
-    # Çıktı klasörünü oluştur
-    if not os.path.exists(output_folder):
-        os.makedirs(output_folder)
+    # Çıktı dizinini oluştur
+    os.makedirs(output_dir, exist_ok=True)
     
-    parcels = parcels_gdf.copy()
-    
-    # ------- 1. İmar uygunluk haritası -------
-    plt.figure(figsize=(12, 10))
-    
-    # Puanlara göre renklendirme
-    cmap = plt.cm.RdYlGn  # Kırmızı-Sarı-Yeşil renk skalası
-    
-    ax = parcels.plot(
-        column='imar_uygunluk_puani',
-        cmap=cmap,
-        legend=True,
-        figsize=(12, 10),
-        legend_kwds={'label': 'İmar Uygunluk Puanı (0-100)'}
+    # 1. İmar Uygunluk Haritası
+    print("İmar uygunluk haritası oluşturuluyor...")
+    m = folium.Map(
+        location=[38.3228, 26.3028],  # Çeşme merkezi
+        zoom_start=12,
+        tiles='CartoDB positron'
     )
     
-    ax.set_title('İzmir/Çeşme Bölgesi İmara Açılabilecek Arsalar Haritası', fontsize=16)
-    ax.set_xlabel('UTM Doğu (m)')
-    ax.set_ylabel('UTM Kuzey (m)')
-    ax.grid(True, linestyle='--', alpha=0.7)
-    
-    # Haritayı kaydet
-    plt.tight_layout()
-    plt.savefig(os.path.join(output_folder, 'imar_uygunluk_haritasi.png'), dpi=300)
-    
-    # ------- 2. Kategori sınıflandırma haritası -------
-    plt.figure(figsize=(12, 10))
-    
-    # Kategorilere göre renklendirme
-    category_colors = {
-        'Çok Düşük': '#d7191c',
-        'Düşük': '#fdae61',
-        'Orta': '#ffffbf',
-        'Yüksek': '#a6d96a',
-        'Çok Yüksek': '#1a9641'
+    # Renk paleti
+    color_scale = {
+        'Çok Düşük': '#FF0000',  # Kırmızı
+        'Düşük': '#FFA500',      # Turuncu
+        'Orta': '#FFFF00',       # Sarı
+        'Yüksek': '#90EE90',     # Açık Yeşil
+        'Çok Yüksek': '#008000'  # Koyu Yeşil
     }
     
-    # Kategorileri sayısal değerlere dönüştür
-    parcels['category_value'] = parcels['imar_uygunluk_sinifi'].map({
-        'Çok Düşük': 0,
-        'Düşük': 1,
-        'Orta': 2,
-        'Yüksek': 3,
-        'Çok Yüksek': 4
-    })
-    
-    ax = parcels.plot(
-        column='category_value',
-        cmap='RdYlGn',
-        figsize=(12, 10),
-        legend=True,
-        categorical=True,
-        legend_kwds={'title': 'İmar Uygunluk Sınıfı'}
-    )
-    
-    ax.set_title('İzmir/Çeşme Bölgesi İmar Uygunluk Sınıflandırması', fontsize=16)
-    ax.set_xlabel('UTM Doğu (m)')
-    ax.set_ylabel('UTM Kuzey (m)')
-    ax.grid(True, linestyle='--', alpha=0.7)
-    
-    # Haritayı kaydet
-    plt.tight_layout()
-    plt.savefig(os.path.join(output_folder, 'imar_uygunluk_siniflandirmasi.png'), dpi=300)
-    
-    # ------- 3. İnteraktif harita oluştur (Folium) -------
-    # CRS'i WGS84'e dönüştür
-    parcels_wgs84 = parcels.to_crs(epsg=4326)
-    
-    # Harita merkezi
-    center_lat = parcels_wgs84.geometry.centroid.y.mean()
-    center_lon = parcels_wgs84.geometry.centroid.x.mean()
-    
-    # Folium haritası oluştur
-    m = folium.Map(location=[center_lat, center_lon], zoom_start=12, tiles='OpenStreetMap')
-    
-    # Sınıf renklerini tanımla
-    fill_colors = {
-        'Çok Düşük': '#d7191c',
-        'Düşük': '#fdae61',
-        'Orta': '#ffffbf',
-        'Yüksek': '#a6d96a',
-        'Çok Yüksek': '#1a9641'
-    }
-    
-    # Stil fonksiyonu
-    def style_function(feature):
-        properties = feature['properties']
-        uygunluk_sinifi = properties['imar_uygunluk_sinifi']
-        return {
-            'fillColor': fill_colors.get(uygunluk_sinifi, '#gray'),
-            'color': 'black',
-            'weight': 1,
-            'fillOpacity': 0.7
-        }
-    
-    # Popup fonksiyonu
-    def popup_function(feature, layer):
-        properties = feature['properties']
-        popup_content = f"""
-        <h4>Parsel Bilgileri</h4>
-        <b>Parsel ID:</b> {properties.get('parcel_id', 'Bilinmiyor')}<br>
-        <b>Alan:</b> {properties.get('area', 0):.1f} m²<br>
-        <b>İmar Uygunluk Puanı:</b> {properties.get('imar_uygunluk_puani', 0)}<br>
-        <b>İmar Uygunluk Sınıfı:</b> {properties.get('imar_uygunluk_sinifi', 'Bilinmiyor')}<br>
-        <b>Eğim (Ortalama):</b> {properties.get('slope_mean', 0):.1f}°<br>
-        <b>Yola Uzaklık:</b> {properties.get('distance_to_road', 0):.1f} m<br>
-        <b>Altyapı Skoru:</b> {properties.get('infrastructure_score', 0):.2f}<br>
+    # Her parsel için popup bilgisi oluştur
+    for _, row in parcels_gdf.iterrows():
+        popup_text = f"""
+        <b>Parsel ID:</b> {row.get('parcel_id', 'Bilinmiyor')}<br>
+        <b>Alan:</b> {row.get('area', 0):.1f} m²<br>
+        <b>İmar Uygunluk Puanı:</b> {row.get('imar_uygunluk_puani', 0)}<br>
+        <b>İmar Uygunluk Sınıfı:</b> {row.get('imar_uygunluk_sinifi', 'Bilinmiyor')}<br>
+        <b>Eğim:</b> {row.get('slope_mean', 0):.1f}°<br>
+        <b>Yola Uzaklık:</b> {row.get('distance_to_road', 0):.1f} m
         """
-        layer.bindPopup(popup_content)
-    
-    # En çok işe yarayacak özellikleri seç
-    properties = ['parcel_id', 'area', 'imar_uygunluk_puani', 'imar_uygunluk_sinifi', 
-                  'slope_mean', 'distance_to_road', 'infrastructure_score']
-    
-    # Özellikleri içeren GeoJSON oluştur
-    parcels_for_map = parcels_wgs84.copy()
-    parcels_for_map = parcels_for_map[properties + ['geometry']]
-    parcels_for_map.columns = parcels_for_map.columns.map(str)
-
-    
-    # GeoJSON ekle
-    folium.GeoJson(
-        parcels_for_map.__geo_interface__,
-        style_function=style_function,
-        popup=popup_function
-    ).add_to(m)
+        
+        # GeoJSON geometrisini oluştur
+        if row.geometry.geom_type == 'Polygon':
+            geojson = {
+                "type": "Feature",
+                "geometry": mapping(row.geometry),
+                "properties": {
+                    "style": {
+                        "color": color_scale.get(row.get('imar_uygunluk_sinifi', 'Çok Düşük')),
+                        "fillColor": color_scale.get(row.get('imar_uygunluk_sinifi', 'Çok Düşük')),
+                        "fillOpacity": 0.5,
+                        "weight": 1
+                    }
+                }
+            }
+            
+            # GeoJSON katmanını haritaya ekle
+            folium.GeoJson(
+                geojson,
+                style_function=lambda x: x['properties']['style'],
+                popup=folium.Popup(popup_text, max_width=300)
+            ).add_to(m)
     
     # Lejant ekle
     legend_html = '''
-    <div style="position: fixed; bottom: 50px; left: 50px; z-index: 1000; background-color: white; 
-    padding: 10px; border: 2px solid grey; border-radius: 5px">
-    <h4>İmar Uygunluk Sınıfı</h4>
-    <div><i style="background: #1a9641; width: 15px; height: 15px; display: inline-block"></i> Çok Yüksek</div>
-    <div><i style="background: #a6d96a; width: 15px; height: 15px; display: inline-block"></i> Yüksek</div>
-    <div><i style="background: #ffffbf; width: 15px; height: 15px; display: inline-block"></i> Orta</div>
-    <div><i style="background: #fdae61; width: 15px; height: 15px; display: inline-block"></i> Düşük</div>
-    <div><i style="background: #d7191c; width: 15px; height: 15px; display: inline-block"></i> Çok Düşük</div>
+    <div style="position: fixed; 
+                bottom: 50px; right: 50px; width: 150px; height: 150px; 
+                border:2px solid grey; z-index:9999;
+                background-color:white;
+                padding: 10px;
+                font-size: 14px;">
+     <p><b>İmar Uygunluk Sınıfları</b></p>
+     <p><i class="fa fa-square" style="color:#008000"></i> Çok Yüksek</p>
+     <p><i class="fa fa-square" style="color:#90EE90"></i> Yüksek</p>
+     <p><i class="fa fa-square" style="color:#FFFF00"></i> Orta</p>
+     <p><i class="fa fa-square" style="color:#FFA500"></i> Düşük</p>
+     <p><i class="fa fa-square" style="color:#FF0000"></i> Çok Düşük</p>
     </div>
     '''
-    
     m.get_root().html.add_child(folium.Element(legend_html))
     
     # Haritayı kaydet
-    m.save(os.path.join(output_folder, 'interaktif_imar_haritasi.html'))
+    m.save(os.path.join(output_dir, 'imar_uygunluk_haritasi.html'))
     
-    # ------- 4. Sıcaklık haritası -------
-    heat_m = folium.Map(location=[center_lat, center_lon], zoom_start=12, tiles='CartoDB dark_matter')
+    # 2. İstatistiksel Grafikler
+    print("İstatistiksel grafikler oluşturuluyor...")
+    plt.figure(figsize=(15, 10))
     
-    # Isı haritası için veri hazırla - yüksek puanlı parseller daha sıcak olsun
-    heat_data = []
-    for idx, row in parcels_wgs84.iterrows():
-        try:
-            # Parsel merkezini al
-            centroid = row.geometry.centroid
-            weight = row['imar_uygunluk_puani'] / 100.0  # Normalize et
-            heat_data.append([centroid.y, centroid.x, weight])
-        except:
-            continue
+    # 2.1 İmar Uygunluk Sınıfı Dağılımı
+    plt.subplot(2, 2, 1)
+    sns.countplot(data=parcels_gdf, x='imar_uygunluk_sinifi', 
+                 order=['Çok Düşük', 'Düşük', 'Orta', 'Yüksek', 'Çok Yüksek'])
+    plt.title('İmar Uygunluk Sınıfı Dağılımı')
+    plt.xticks(rotation=45)
     
-    # Isı haritası ekle
-    HeatMap(heat_data, radius=15, gradient={0.4: 'blue', 0.65: 'lime', 0.8: 'yellow', 1: 'red'}).add_to(heat_m)
+    # 2.2 Eğim vs İmar Uygunluk Puanı
+    plt.subplot(2, 2, 2)
+    sns.scatterplot(data=parcels_gdf, x='slope_mean', y='imar_uygunluk_puani', 
+                   alpha=0.5, hue='imar_uygunluk_sinifi')
+    plt.title('Eğim vs İmar Uygunluk Puanı')
     
-    # Haritayı kaydet
-    heat_m.save(os.path.join(output_folder, 'imar_isik_haritasi.html'))
+    # 2.3 Yola Uzaklık vs İmar Uygunluk Puanı
+    plt.subplot(2, 2, 3)
+    sns.scatterplot(data=parcels_gdf, x='distance_to_road', y='imar_uygunluk_puani', 
+                   alpha=0.5, hue='imar_uygunluk_sinifi')
+    plt.title('Yola Uzaklık vs İmar Uygunluk Puanı')
     
-    # ------- 5. İstatistiksel grafikler -------
-    # 5.1. Sınıf dağılımı grafiği
-    plt.figure(figsize=(10, 6))
-    ax = sns.countplot(
-        x='imar_uygunluk_sinifi', 
-        data=parcels,
-        order=['Çok Yüksek', 'Yüksek', 'Orta', 'Düşük', 'Çok Düşük'],
-        palette='RdYlGn_r'
-    )
-    
-    plt.title('İmar Uygunluk Sınıflarının Dağılımı', fontsize=14)
-    plt.xlabel('İmar Uygunluk Sınıfı')
-    plt.ylabel('Parsel Sayısı')
-    
-    # Sayıları ekle
-    for i, p in enumerate(ax.patches):
-        ax.annotate(f'{p.get_height()}', (p.get_x() + p.get_width() / 2., p.get_height() + 5),
-                    ha='center', va='center', fontsize=10, color='black')
+    # 2.4 Parsel Alanı vs İmar Uygunluk Puanı
+    plt.subplot(2, 2, 4)
+    sns.scatterplot(data=parcels_gdf, x='area', y='imar_uygunluk_puani', 
+                   alpha=0.5, hue='imar_uygunluk_sinifi')
+    plt.title('Parsel Alanı vs İmar Uygunluk Puanı')
     
     plt.tight_layout()
-    plt.savefig(os.path.join(output_folder, 'imar_sinif_dagilimi.png'), dpi=300)
+    plt.savefig(os.path.join(output_dir, 'imar_uygunluk_analizi.png'))
+    plt.close()
     
-    # 5.2. Eğim vs İmar Uygunluğu
-    plt.figure(figsize=(10, 6))
-    sns.boxplot(
-        x='imar_uygunluk_sinifi',
-        y='slope_mean',
-        data=parcels,
-        order=['Çok Yüksek', 'Yüksek', 'Orta', 'Düşük', 'Çok Düşük'],
-        palette='RdYlGn_r'
-    )
+    print("Görselleştirme tamamlandı.")
+    return True
+
+def rapor_olustur(parcels_gdf, model_artifacts, output_dir='output'):
+    """
+    Model sonuçlarını ve analizleri içeren detaylı bir rapor oluşturur
+    """
+    print("Rapor oluşturuluyor...")
     
-    plt.title('Eğim ile İmar Uygunluğu Arasındaki İlişki', fontsize=14)
-    plt.xlabel('İmar Uygunluk Sınıfı')
-    plt.ylabel('Ortalama Eğim (derece)')
+    # Çıktı dizinini oluştur
+    os.makedirs(output_dir, exist_ok=True)
     
-    plt.tight_layout()
-    plt.savefig(os.path.join(output_folder, 'egim_imar_iliskisi.png'), dpi=300)
-    
-    # 5.3. Altyapı Skoru vs İmar Uygunluğu
-    plt.figure(figsize=(10, 6))
-    sns.boxplot(
-        x='imar_uygunluk_sinifi',
-        y='infrastructure_score',
-        data=parcels,
-        order=['Çok Yüksek', 'Yüksek', 'Orta', 'Düşük', 'Çok Düşük'],
-        palette='RdYlGn_r'
-    )
-    
-    plt.title('Altyapı Skoru ile İmar Uygunluğu Arasındaki İlişki', fontsize=14)
-    plt.xlabel('İmar Uygunluk Sınıfı')
-    plt.ylabel('Altyapı Skoru')
-    
-    plt.tight_layout()
-    plt.savefig(os.path.join(output_folder, 'altyapi_imar_iliskisi.png'), dpi=300)
-    
-    # 5.4. Parsel alanı vs İmar Uygunluğu
-    plt.figure(figsize=(10, 6))
-    sns.boxplot(
-        x='imar_uygunluk_sinifi',
-        y='area',
-        data=parcels,
-        order=['Çok Yüksek', 'Yüksek', 'Orta', 'Düşük', 'Çok Düşük'],
-        palette='RdYlGn_r'
-    )
-    
-    plt.title('Parsel Alanı ile İmar Uygunluğu Arasındaki İlişki', fontsize=14)
-    plt.xlabel('İmar Uygunluk Sınıfı')
-    plt.ylabel('Parsel Alanı (m²)')
-    
-    plt.tight_layout()
-    plt.savefig(os.path.join(output_folder, 'alan_imar_iliskisi.png'), dpi=300)
-    
-    # ------- 6. CSV raporu oluştur -------
-    # Rapor için önemli alanları seç
-    report_columns = [
-        'parcel_id', 'area', 'imar_uygunluk_puani', 'imar_uygunluk_sinifi',
-        'zoning_potential', 'ml_probability', 'slope_mean', 'distance_to_road',
-        'infrastructure_score', 'buildable_factor', 'geological_risk', 
-        'restriction_count', 'has_restrictions'
-    ]
-    
-    # Mevcut kolonları kontrol et
-    available_columns = [col for col in report_columns if col in parcels.columns]
-    
-    # CSV dosyasını oluştur
-    parcels[available_columns].to_csv(
-        os.path.join(output_folder, 'izmir_cesme_imar_raporu.csv'),
-        index=False, encoding='utf-8-sig'  # Excel'de Türkçe karakterlerin doğru görünmesi için
-    )
-    
-    print(f"Görselleştirme ve raporlama tamamlandı. Sonuçlar '{output_folder}' klasörüne kaydedildi.")
-    
-    # Özet sonuçları döndür
-    return {
-        'output_folder': output_folder,
-        'total_parcels': len(parcels),
-        'high_potential_parcels': len(parcels[parcels['imar_uygunluk_sinifi'].isin(['Çok Yüksek', 'Yüksek'])]),
-        'category_distribution': parcels['imar_uygunluk_sinifi'].value_counts().to_dict()
+    # Rapor içeriği
+    report = {
+        'genel_bilgiler': {
+            'toplam_parsel': len(parcels_gdf),
+            'ortalama_alan': parcels_gdf['area'].mean(),
+            'ortalama_egim': parcels_gdf['slope_mean'].mean(),
+            'ortalama_yola_uzaklik': parcels_gdf['distance_to_road'].mean()
+        },
+        'imar_uygunluk_dagilimi': parcels_gdf['imar_uygunluk_sinifi'].value_counts().to_dict(),
+        'kisitlama_analizi': {
+            'kisitlamali_parsel_sayisi': parcels_gdf['has_restrictions'].sum(),
+            'kisitlama_tipleri': {
+                'korunan_alan': parcels_gdf['rule_protected'].sum(),
+                'dik_egim': parcels_gdf['rule_steep_slope'].sum(),
+                'kucuk_alan': parcels_gdf['rule_small_area'].sum(),
+                'yuksek_risk': parcels_gdf['rule_high_geo_risk'].sum(),
+                'bozuk_sekil': parcels_gdf['rule_irregular_shape'].sum(),
+                'uzak_parsel': parcels_gdf['rule_far_from_road'].sum()
+            }
+        },
+        'model_performansi': model_artifacts.get('metrics', {}),
+        'ozellik_onemleri': model_artifacts.get('feature_importance', pd.DataFrame()).to_dict('records')
     }
+    
+    # Raporu JSON olarak kaydet
+    with open(os.path.join(output_dir, 'imar_analiz_raporu.json'), 'w', encoding='utf-8') as f:
+        json.dump(report, f, ensure_ascii=False, indent=4)
+    
+    # Raporu HTML olarak da oluştur
+    html_report = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <title>İzmir/Çeşme İmar Analiz Raporu</title>
+        <style>
+            body {{ font-family: Arial, sans-serif; margin: 20px; }}
+            h1, h2 {{ color: #2c3e50; }}
+            table {{ border-collapse: collapse; width: 100%; margin-bottom: 20px; }}
+            th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+            th {{ background-color: #f2f2f2; }}
+            .metric {{ margin-bottom: 15px; }}
+            .metric-value {{ font-weight: bold; color: #2980b9; }}
+        </style>
+    </head>
+    <body>
+        <h1>İzmir/Çeşme İmar Analiz Raporu</h1>
+        
+        <h2>Genel Bilgiler</h2>
+        <div class="metric">
+            <p>Toplam Parsel Sayısı: <span class="metric-value">{report['genel_bilgiler']['toplam_parsel']}</span></p>
+            <p>Ortalama Parsel Alanı: <span class="metric-value">{report['genel_bilgiler']['ortalama_alan']:.2f} m²</span></p>
+            <p>Ortalama Eğim: <span class="metric-value">{report['genel_bilgiler']['ortalama_egim']:.2f}°</span></p>
+            <p>Ortalama Yola Uzaklık: <span class="metric-value">{report['genel_bilgiler']['ortalama_yola_uzaklik']:.2f} m</span></p>
+        </div>
+        
+        <h2>İmar Uygunluk Dağılımı</h2>
+        <table>
+            <tr>
+                <th>Uygunluk Sınıfı</th>
+                <th>Parsel Sayısı</th>
+                <th>Yüzde</th>
+            </tr>
+    """
+    
+    total_parcels = report['genel_bilgiler']['toplam_parsel']
+    for sinif, sayi in report['imar_uygunluk_dagilimi'].items():
+        yuzde = (sayi / total_parcels) * 100
+        html_report += f"""
+            <tr>
+                <td>{sinif}</td>
+                <td>{sayi}</td>
+                <td>{yuzde:.1f}%</td>
+            </tr>
+        """
+    
+    html_report += """
+        </table>
+        
+        <h2>Kısıtlama Analizi</h2>
+        <table>
+            <tr>
+                <th>Kısıtlama Tipi</th>
+                <th>Parsel Sayısı</th>
+            </tr>
+    """
+    
+    for kısıtlama, sayı in report['kisitlama_analizi']['kisitlama_tipleri'].items():
+        html_report += f"""
+            <tr>
+                <td>{kısıtlama.replace('_', ' ').title()}</td>
+                <td>{sayı}</td>
+            </tr>
+        """
+    
+    html_report += """
+        </table>
+        
+        <h2>Model Performansı</h2>
+        <table>
+            <tr>
+                <th>Metrik</th>
+                <th>Değer</th>
+            </tr>
+    """
+    
+    for metrik, değer in report['model_performansi'].items():
+        html_report += f"""
+            <tr>
+                <td>{metrik.title()}</td>
+                <td>{değer:.4f}</td>
+            </tr>
+        """
+    
+    html_report += """
+        </table>
+        
+        <h2>Özellik Önem Dereceleri</h2>
+        <table>
+            <tr>
+                <th>Özellik</th>
+                <th>Önem Derecesi</th>
+            </tr>
+    """
+    
+    for ozellik in report['ozellik_onemleri']:
+        html_report += f"""
+            <tr>
+                <td>{ozellik['feature']}</td>
+                <td>{ozellik['importance']:.4f}</td>
+            </tr>
+        """
+    
+    html_report += """
+        </table>
+    </body>
+    </html>
+    """
+    
+    # HTML raporunu kaydet
+    with open(os.path.join(output_dir, 'imar_analiz_raporu.html'), 'w', encoding='utf-8') as f:
+        f.write(html_report)
+    
+    print("Rapor oluşturma tamamlandı.")
+    return True
 
 # ------------ ANA FONKSİYON ------------
 
@@ -1195,18 +1190,22 @@ def izmir_cesme_imar_modeli_uygula():
     
     # 5. Görselleştirme ve Raporlama
     print("\n----- ADIM 5: GÖRSELLEŞTİRME VE RAPORLAMA -----")
-    sonuclar = gorsellestime(puanlanmis_parceller)
+    gorsellestirme(puanlanmis_parceller)
+    
+    # 6. Rapor oluşturma
+    print("\n6. Rapor oluşturma aşaması...")
+    rapor_olustur(puanlanmis_parceller, model_artifacts)
     
     # Özet bilgi
     print("\n===== MODEL UYGULAMASI TAMAMLANDI =====")
-    print(f"Toplam parsel sayısı: {sonuclar['total_parcels']}")
-    print(f"İmara açılma potansiyeli yüksek parsel sayısı: {sonuclar['high_potential_parcels']}")
-    print(f"Sınıf dağılımı: {sonuclar['category_distribution']}")
-    print(f"Tüm çıktılar '{sonuclar['output_folder']}' klasöründe bulunabilir.")
+    print(f"Toplam parsel sayısı: {len(puanlanmis_parceller)}")
+    print(f"İmara açılma potansiyeli yüksek parsel sayısı: {len(puanlanmis_parceller[puanlanmis_parceller['imar_uygunluk_sinifi'].isin(['Çok Yüksek', 'Yüksek'])])}")
+    print(f"Sınıf dağılımı: {puanlanmis_parceller['imar_uygunluk_sinifi'].value_counts().to_dict()}")
+    print(f"Tüm çıktılar '{output_dir}' klasöründe bulunabilir.")
     
-    return puanlanmis_parceller, model_artifacts, sonuclar
+    return puanlanmis_parceller, model_artifacts
 
 # Modeli çalıştır
 if __name__ == "__main__":
-    parceller, model, sonuclar = izmir_cesme_imar_modeli_uygula()
-    print("Tamamlandı:", sonuclar)
+    parceller, model = izmir_cesme_imar_modeli_uygula()
+    print("Tamamlandı:", parceller)
